@@ -9,22 +9,8 @@ import {
     deleteActivity,
 } from "../services/trips";
 
-import {
-    ArrowLeft,
-    Plus,
-    X,
-    MapPin,
-    MapPinned,
-    Trash2,
-    CalendarDays,
-    Clock3,
-    MapPinHouse,
-    Wallet,
-} from "lucide-react";
-
 
 function formatDate(dateString) {
-
     if (!dateString) {
         return "";
     }
@@ -48,6 +34,7 @@ function TripBuilder({ tripId, onBack }) {
     const [error, setError] = useState("");
 
     const [showCityForm, setShowCityForm] = useState(false);
+    const [savingCity, setSavingCity] = useState(false);
 
     const [cityForm, setCityForm] = useState({
         name: "",
@@ -57,57 +44,88 @@ function TripBuilder({ tripId, onBack }) {
     });
 
     const [activityForms, setActivityForms] = useState({});
-
-    const [savingCity, setSavingCity] = useState(false);
     const [savingActivity, setSavingActivity] = useState(null);
 
 
-    // ---------------------------------------------------------
-    // Load trip + cities
-    // ---------------------------------------------------------
-
-    async function loadTripBuilder() {
-
-        try {
-
-            setLoading(true);
-            setError("");
-
-            const tripData = await getTrip(tripId);
-            const citiesData = await getCities(tripId);
-
-            setTrip(tripData.trip);
-            setCities(citiesData.cities);
-
-        } catch (error) {
-
-            setError(error.message);
-
-        } finally {
-
-            setLoading(false);
-
-        }
-    }
-
+    // =========================================================
+    // LOAD TRIP
+    // =========================================================
 
     useEffect(() => {
 
-        loadTripBuilder();
+        async function loadTrip() {
+
+            if (!tripId) {
+                setError("No trip selected.");
+                setLoading(false);
+                return;
+            }
+
+            try {
+
+                setLoading(true);
+                setError("");
+
+                const tripResponse = await getTrip(tripId);
+                const citiesResponse = await getCities(tripId);
+
+                setTrip(tripResponse.trip);
+
+                setCities(
+                    Array.isArray(citiesResponse.cities)
+                        ? citiesResponse.cities
+                        : []
+                );
+
+            } catch (error) {
+
+                console.error(
+                    "Trip Builder error:",
+                    error
+                );
+
+                setError(
+                    error.message ||
+                    "Failed to load trip."
+                );
+
+            } finally {
+
+                setLoading(false);
+
+            }
+        }
+
+        loadTrip();
 
     }, [tripId]);
 
 
-    // ---------------------------------------------------------
-    // City form
-    // ---------------------------------------------------------
+    // =========================================================
+    // CITY FORM
+    // =========================================================
 
     function handleCityChange(event) {
 
+        const { name, value } = event.target;
+
         setCityForm({
             ...cityForm,
-            [event.target.name]: event.target.value,
+            [name]: value,
         });
+
+    }
+
+
+    function resetCityForm() {
+
+        setCityForm({
+            name: "",
+            arrival_date: "",
+            departure_date: "",
+            notes: "",
+        });
+
     }
 
 
@@ -142,51 +160,115 @@ function TripBuilder({ tripId, onBack }) {
             return;
         }
 
+
+        // City must be inside trip dates.
+
+        if (
+            cityForm.arrival_date <
+            trip.start_date
+        ) {
+            setError(
+                "Arrival date must be within the trip dates."
+            );
+            return;
+        }
+
+        if (
+            cityForm.departure_date >
+            trip.end_date
+        ) {
+            setError(
+                "Departure date must be within the trip dates."
+            );
+            return;
+        }
+
+
+        // Prevent overlapping cities.
+
+        const overlap = cities.find(city => {
+
+            return (
+                cityForm.arrival_date <
+                    city.departure_date &&
+                city.arrival_date <
+                    cityForm.departure_date
+            );
+
+        });
+
+
+        if (overlap) {
+
+            setError(
+                `City dates overlap with ${overlap.name} ` +
+                `(${formatDate(
+                    overlap.arrival_date
+                )} — ${formatDate(
+                    overlap.departure_date
+                )}).`
+            );
+
+            return;
+        }
+
+
         setSavingCity(true);
 
         try {
 
-            const data = await createCity(
-                tripId,
-                cityForm
-            );
+            const response =
+                await createCity(
+                    tripId,
+                    cityForm
+                );
+
+            if (!response.city) {
+                throw new Error(
+                    "City was not returned by the server."
+                );
+            }
 
             setCities([
                 ...cities,
-                data.city
+                response.city,
             ]);
 
-            setCityForm({
-                name: "",
-                arrival_date: "",
-                departure_date: "",
-                notes: "",
-            });
+            resetCityForm();
 
             setShowCityForm(false);
-            setError("");
 
         } catch (error) {
 
-            setError(error.message);
+            console.error(
+                "Create city error:",
+                error
+            );
+
+            setError(
+                error.message ||
+                "Failed to create city."
+            );
 
         } finally {
 
             setSavingCity(false);
 
         }
+
     }
 
 
-    // ---------------------------------------------------------
-    // Delete city
-    // ---------------------------------------------------------
+    // =========================================================
+    // DELETE CITY
+    // =========================================================
 
     async function handleDeleteCity(city) {
 
-        const confirmed = window.confirm(
-            `Delete ${city.name} and all its activities?`
-        );
+        const confirmed =
+            window.confirm(
+                `Delete "${city.name}"?`
+            );
 
         if (!confirmed) {
             return;
@@ -194,35 +276,44 @@ function TripBuilder({ tripId, onBack }) {
 
         try {
 
+            setError("");
+
             await deleteCity(city.id);
 
             setCities(
                 cities.filter(
-                    item => item.id !== city.id
+                    item =>
+                        item.id !== city.id
                 )
             );
 
-            // Clear stale errors, especially an old city-overlap message.
-            setError("");
-
         } catch (error) {
 
-            setError(error.message);
+            console.error(
+                "Delete city error:",
+                error
+            );
+
+            setError(
+                error.message ||
+                "Failed to delete city."
+            );
 
         }
+
     }
 
 
-    // ---------------------------------------------------------
-    // Activity form helpers
-    // ---------------------------------------------------------
+    // =========================================================
+    // ACTIVITY FORM
+    // =========================================================
 
-    function showActivityForm(cityId) {
+    function openActivityForm(cityId) {
 
         setActivityForms({
             ...activityForms,
+
             [cityId]: {
-                visible: true,
                 name: "",
                 date: "",
                 time: "",
@@ -230,11 +321,13 @@ function TripBuilder({ tripId, onBack }) {
                 notes: "",
                 estimated_cost: "",
             },
+
         });
+
     }
 
 
-    function hideActivityForm(cityId) {
+    function closeActivityForm(cityId) {
 
         const updated = {
             ...activityForms,
@@ -243,6 +336,7 @@ function TripBuilder({ tripId, onBack }) {
         delete updated[cityId];
 
         setActivityForms(updated);
+
     }
 
 
@@ -251,19 +345,27 @@ function TripBuilder({ tripId, onBack }) {
         event
     ) {
 
+        const {
+            name,
+            value,
+        } = event.target;
+
         setActivityForms({
             ...activityForms,
+
             [cityId]: {
                 ...activityForms[cityId],
-                [event.target.name]: event.target.value,
+                [name]: value,
             },
+
         });
+
     }
 
 
-    // ---------------------------------------------------------
-    // Create activity
-    // ---------------------------------------------------------
+    // =========================================================
+    // CREATE ACTIVITY
+    // =========================================================
 
     async function handleCreateActivity(
         city,
@@ -272,90 +374,160 @@ function TripBuilder({ tripId, onBack }) {
 
         event.preventDefault();
 
-        const form = activityForms[city.id];
+        setError("");
 
-        if (!form || !form.name.trim()) {
-            setError("Activity name is required.");
+        const form =
+            activityForms[city.id];
+
+        if (!form.name.trim()) {
+
+            setError(
+                "Activity name is required."
+            );
+
             return;
         }
+
 
         if (
             form.date &&
             (
-                form.date < city.arrival_date ||
-                form.date > city.departure_date
+                form.date <
+                    city.arrival_date ||
+                form.date >
+                    city.departure_date
             )
         ) {
+
             setError(
                 "Activity date must be within the city dates."
             );
+
             return;
         }
 
+
+        const cost =
+            form.estimated_cost === ""
+                ? 0
+                : Number(
+                    form.estimated_cost
+                );
+
+
+        if (
+            Number.isNaN(cost) ||
+            cost < 0
+        ) {
+
+            setError(
+                "Estimated cost cannot be negative."
+            );
+
+            return;
+        }
+
+
         setSavingActivity(city.id);
-        setError("");
 
         try {
 
-            const data = await createActivity(
-                city.id,
-                {
-                    name: form.name,
-                    date: form.date || null,
-                    time: form.time,
-                    location: form.location,
-                    notes: form.notes,
-                    estimated_cost:
-                        form.estimated_cost === ""
-                            ? 0
-                            : Number(form.estimated_cost),
-                }
-            );
+            const response =
+                await createActivity(
+                    city.id,
+                    {
+                        name:
+                            form.name.trim(),
+
+                        date:
+                            form.date || null,
+
+                        time:
+                            form.time,
+
+                        location:
+                            form.location.trim(),
+
+                        notes:
+                            form.notes.trim(),
+
+                        estimated_cost:
+                            cost,
+                    }
+                );
+
+
+            if (!response.activity) {
+
+                throw new Error(
+                    "Activity was not returned by the server."
+                );
+
+            }
+
+
+            // Add activity locally.
 
             setCities(
                 cities.map(item => {
 
-                    if (item.id !== city.id) {
+                    if (
+                        item.id !== city.id
+                    ) {
                         return item;
                     }
 
                     return {
                         ...item,
+
                         activities: [
                             ...(item.activities || []),
-                            data.activity,
+                            response.activity,
                         ],
                     };
 
                 })
             );
 
-            hideActivityForm(city.id);
+
+            closeActivityForm(
+                city.id
+            );
 
         } catch (error) {
 
-            setError(error.message);
+            console.error(
+                "Create activity error:",
+                error
+            );
+
+            setError(
+                error.message ||
+                "Failed to create activity."
+            );
 
         } finally {
 
             setSavingActivity(null);
 
         }
+
     }
 
 
-    // ---------------------------------------------------------
-    // Delete activity
-    // ---------------------------------------------------------
+    // =========================================================
+    // DELETE ACTIVITY
+    // =========================================================
 
     async function handleDeleteActivity(
         city,
         activity
     ) {
 
-        const confirmed = window.confirm(
-            `Delete "${activity.name}"?`
-        );
+        const confirmed =
+            window.confirm(
+                `Delete "${activity.name}"?`
+            );
 
         if (!confirmed) {
             return;
@@ -363,21 +535,32 @@ function TripBuilder({ tripId, onBack }) {
 
         try {
 
-            await deleteActivity(activity.id);
+            setError("");
+
+            await deleteActivity(
+                activity.id
+            );
 
             setCities(
                 cities.map(item => {
 
-                    if (item.id !== city.id) {
+                    if (
+                        item.id !== city.id
+                    ) {
                         return item;
                     }
 
                     return {
                         ...item,
+
                         activities:
-                            (item.activities || []).filter(
+                            (
+                                item.activities ||
+                                []
+                            ).filter(
                                 existing =>
-                                    existing.id !== activity.id
+                                    existing.id !==
+                                    activity.id
                             ),
                     };
 
@@ -386,15 +569,24 @@ function TripBuilder({ tripId, onBack }) {
 
         } catch (error) {
 
-            setError(error.message);
+            console.error(
+                "Delete activity error:",
+                error
+            );
+
+            setError(
+                error.message ||
+                "Failed to delete activity."
+            );
 
         }
+
     }
 
 
-    // ---------------------------------------------------------
-    // Loading
-    // ---------------------------------------------------------
+    // =========================================================
+    // LOADING
+    // =========================================================
 
     if (loading) {
 
@@ -406,6 +598,10 @@ function TripBuilder({ tripId, onBack }) {
 
     }
 
+
+    // =========================================================
+    // TRIP NOT FOUND
+    // =========================================================
 
     if (!trip) {
 
@@ -423,7 +619,8 @@ function TripBuilder({ tripId, onBack }) {
                     </button>
 
                     <div className="error-message">
-                        {error || "Trip not found."}
+                        {error ||
+                            "Trip not found."}
                     </div>
 
                 </div>
@@ -434,22 +631,26 @@ function TripBuilder({ tripId, onBack }) {
     }
 
 
-    // ---------------------------------------------------------
-    // Main UI
-    // ---------------------------------------------------------
+    // =========================================================
+    // MAIN PAGE
+    // =========================================================
 
     return (
+
         <div className="trips-page">
+
+            {/* Back */}
 
             <button
                 className="back-button"
                 onClick={onBack}
                 type="button"
             >
-                <ArrowLeft size={18} strokeWidth={2} />
-                <span>Back to My Trips</span>
+                ← Back to My Trips
             </button>
 
+
+            {/* Header */}
 
             <div className="trips-header">
 
@@ -459,67 +660,93 @@ function TripBuilder({ tripId, onBack }) {
                         TRIP BUILDER
                     </p>
 
-                    <h1>{trip.name}</h1>
+                    <h1>
+                        {trip.name}
+                    </h1>
 
                     <p className="page-subtitle">
-
-                        {formatDate(trip.start_date)}
+                        📅{" "}
+                        {formatDate(
+                            trip.start_date
+                        )}
                         {" — "}
-                        {formatDate(trip.end_date)}
-
+                        {formatDate(
+                            trip.end_date
+                        )}
                     </p>
 
                 </div>
+
 
                 <button
                     className="primary-button"
                     type="button"
                     onClick={() => {
+
                         setError("");
-                        setShowCityForm(!showCityForm);
+
+                        if (
+                            showCityForm
+                        ) {
+
+                            setShowCityForm(
+                                false
+                            );
+
+                            resetCityForm();
+
+                        } else {
+
+                            setShowCityForm(
+                                true
+                            );
+
+                        }
+
                     }}
                 >
-                    {showCityForm ? (
-                        <>
-                            <X size={18} strokeWidth={2} />
-                            <span>Cancel</span>
-                        </>
-                    ) : (
-                        <>
-                            <Plus size={18} strokeWidth={2} />
-                            <span>Add City</span>
-                        </>
-                    )}
+
+                    {showCityForm
+                        ? "✕ Cancel"
+                        : "+ Add City"}
+
                 </button>
 
             </div>
 
 
+            {/* Error */}
+
             {error && (
+
                 <div className="error-message">
                     {error}
                 </div>
+
             )}
 
 
-            {/* ------------------------------------------------
-                Add City Form
-            ------------------------------------------------ */}
+            {/* =================================================
+                ADD CITY
+            ================================================= */}
 
             {showCityForm && (
 
-                <div className="trip-builder-panel">
+                <div className="form-container">
 
-                    <h2>Add a city</h2>
-
-                    <p className="page-subtitle">
-                        Choose where you will stay during
-                        this part of your journey.
+                    <p className="eyebrow">
+                        NEW DESTINATION
                     </p>
+
+                    <h2>
+                        Add a city
+                    </h2>
 
                     <form
                         className="trip-form"
-                        onSubmit={handleCreateCity}
+                        onSubmit={
+                            handleCreateCity
+                        }
                     >
 
                         <div className="form-group">
@@ -532,8 +759,12 @@ function TripBuilder({ tripId, onBack }) {
                                 type="text"
                                 name="name"
                                 placeholder="e.g. Jaipur"
-                                value={cityForm.name}
-                                onChange={handleCityChange}
+                                value={
+                                    cityForm.name
+                                }
+                                onChange={
+                                    handleCityChange
+                                }
                             />
 
                         </div>
@@ -550,12 +781,18 @@ function TripBuilder({ tripId, onBack }) {
                                 <input
                                     type="date"
                                     name="arrival_date"
+                                    min={
+                                        trip.start_date
+                                    }
+                                    max={
+                                        trip.end_date
+                                    }
                                     value={
                                         cityForm.arrival_date
                                     }
-                                    min={trip.start_date}
-                                    max={trip.end_date}
-                                    onChange={handleCityChange}
+                                    onChange={
+                                        handleCityChange
+                                    }
                                 />
 
                             </div>
@@ -570,12 +807,18 @@ function TripBuilder({ tripId, onBack }) {
                                 <input
                                     type="date"
                                     name="departure_date"
+                                    min={
+                                        trip.start_date
+                                    }
+                                    max={
+                                        trip.end_date
+                                    }
                                     value={
                                         cityForm.departure_date
                                     }
-                                    min={trip.start_date}
-                                    max={trip.end_date}
-                                    onChange={handleCityChange}
+                                    onChange={
+                                        handleCityChange
+                                    }
                                 />
 
                             </div>
@@ -586,15 +829,19 @@ function TripBuilder({ tripId, onBack }) {
                         <div className="form-group">
 
                             <label>
-                                Notes
+                                Optional notes
                             </label>
 
                             <textarea
                                 name="notes"
-                                placeholder="Optional notes about this city..."
-                                value={cityForm.notes}
-                                onChange={handleCityChange}
                                 rows="4"
+                                placeholder="Anything important about this stop..."
+                                value={
+                                    cityForm.notes
+                                }
+                                onChange={
+                                    handleCityChange
+                                }
                             />
 
                         </div>
@@ -603,12 +850,15 @@ function TripBuilder({ tripId, onBack }) {
                         <button
                             className="primary-button"
                             type="submit"
-                            disabled={savingCity}
+                            disabled={
+                                savingCity
+                            }
                         >
-                            <Plus size={18} strokeWidth={2} />
-                            <span>
-                                {savingCity ? "Adding city..." : "Add City"}
-                            </span>
+
+                            {savingCity
+                                ? "Adding city..."
+                                : "Add City"}
+
                         </button>
 
                     </form>
@@ -618,464 +868,506 @@ function TripBuilder({ tripId, onBack }) {
             )}
 
 
-            {/* ------------------------------------------------
-                Cities
-            ------------------------------------------------ */}
+            {/* =================================================
+                CITIES
+            ================================================= */}
 
-            {cities.length === 0 && !showCityForm ? (
+            {cities.length === 0 ? (
 
                 <div className="empty-state">
 
                     <div className="empty-icon">
-                        <MapPinned size={40} strokeWidth={1.8} />
+                        🗺️
                     </div>
 
-                    <h2>Add your first city</h2>
+                    <h2>
+                        Start building your journey
+                    </h2>
 
                     <p>
-                        Start building your journey by
-                        choosing the cities you want to visit.
+                        Add your first city to this trip.
                     </p>
 
                     <button
                         className="primary-button empty-button"
                         type="button"
                         onClick={() => {
+
                             setError("");
-                            setShowCityForm(true);
+                            setShowCityForm(
+                                true
+                            );
+
                         }}
                     >
-                        <Plus size={17} strokeWidth={2} />
-                        <span>Add City</span>
+                        + Add City
                     </button>
 
                 </div>
 
             ) : (
 
-                <div className="city-list">
+                <div className="trips-grid">
 
-                    {cities.map(city => (
+                    {cities.map(city => {
 
-                        <div
-                            className="city-card"
-                            key={city.id}
-                        >
+                        const activities =
+                            Array.isArray(
+                                city.activities
+                            )
+                                ? city.activities
+                                : [];
 
-                            <div className="city-card-header">
-
-                                <div>
-
-                                    <p className="eyebrow">
-                                        CITY
-                                    </p>
-
-                                    <h2 className="city-title">
-                                        <MapPin size={22} strokeWidth={2} />
-                                        <span>{city.name}</span>
-                                    </h2>
-
-                                    <p className="trip-dates">
-
-                                        {formatDate(
-                                            city.arrival_date
-                                        )}
-
-                                        {" — "}
-
-                                        {formatDate(
-                                            city.departure_date
-                                        )}
-
-                                    </p>
-
-                                </div>
-
-                                <button
-                                    className="delete-button"
-                                    type="button"
-                                    onClick={() =>
-                                        handleDeleteCity(city)
-                                    }
-                                >
-                                    <Trash2 size={16} strokeWidth={2} />
-                                    <span>Delete</span>
-                                </button>
-
-                            </div>
+                        const activityForm =
+                            activityForms[
+                                city.id
+                            ];
 
 
-                            {city.notes && (
+                        return (
 
-                                <p className="city-notes">
-                                    {city.notes}
-                                </p>
+                            <div
+                                className="trip-card"
+                                key={city.id}
+                            >
 
-                            )}
+                                <div className="trip-card-content">
 
+                                    {/* City header */}
 
-                            <div className="activities-section">
+                                    <div className="city-header">
 
-                                <div className="activities-header">
+                                        <div>
 
-                                    <h3>
-                                        Activities
-                                    </h3>
+                                            <h2>
+                                                📍{" "}
+                                                {city.name}
+                                            </h2>
 
-                                    {!activityForms[city.id] && (
+                                            <p className="trip-dates">
+
+                                                📅{" "}
+
+                                                {formatDate(
+                                                    city.arrival_date
+                                                )}
+
+                                                {" — "}
+
+                                                {formatDate(
+                                                    city.departure_date
+                                                )}
+
+                                            </p>
+
+                                        </div>
+
 
                                         <button
-                                            className="secondary-button"
+                                            className="delete-button"
                                             type="button"
                                             onClick={() =>
-                                                showActivityForm(
-                                                    city.id
+                                                handleDeleteCity(
+                                                    city
                                                 )
                                             }
                                         >
-                                            <Plus size={16} strokeWidth={2} />
-                                            <span>Add Activity</span>
+                                            🗑️ Delete
                                         </button>
+
+                                    </div>
+
+
+                                    {/* City notes */}
+
+                                    {city.notes && (
+
+                                        <div className="city-notes">
+
+                                            📝{" "}
+
+                                            {city.notes}
+
+                                        </div>
 
                                     )}
 
-                                </div>
 
+                                    {/* Activities */}
 
-                                {/* Activity Form */}
+                                    <div className="activities-section">
 
-                                {activityForms[city.id] && (
+                                        <div className="activities-header">
 
-                                    <form
-                                        className="activity-form"
-                                        onSubmit={(event) =>
-                                            handleCreateActivity(
-                                                city,
-                                                event
-                                            )
-                                        }
-                                    >
+                                            <h3>
+                                                Activities
+                                            </h3>
 
-                                        <div className="form-group">
+                                            {!activityForm && (
 
-                                            <label>
-                                                Activity name *
-                                            </label>
-
-                                            <input
-                                                type="text"
-                                                name="name"
-                                                placeholder="e.g. Amber Fort"
-                                                value={
-                                                    activityForms[
-                                                        city.id
-                                                    ].name
-                                                }
-                                                onChange={(event) =>
-                                                    handleActivityChange(
-                                                        city.id,
-                                                        event
-                                                    )
-                                                }
-                                            />
-
-                                        </div>
-
-
-                                        <div className="date-grid">
-
-                                            <div className="form-group">
-
-                                                <label>
-                                                    Date
-                                                </label>
-
-                                                <input
-                                                    type="date"
-                                                    name="date"
-                                                    min={
-                                                        city.arrival_date
-                                                    }
-                                                    max={
-                                                        city.departure_date
-                                                    }
-                                                    value={
-                                                        activityForms[
+                                                <button
+                                                    className="secondary-button"
+                                                    type="button"
+                                                    onClick={() =>
+                                                        openActivityForm(
                                                             city.id
-                                                        ].date
-                                                    }
-                                                    onChange={(event) =>
-                                                        handleActivityChange(
-                                                            city.id,
-                                                            event
                                                         )
-                                                    }
-                                                />
-
-                                            </div>
-
-
-                                            <div className="form-group">
-
-                                                <label>
-                                                    Time
-                                                </label>
-
-                                                <input
-                                                    type="time"
-                                                    name="time"
-                                                    value={
-                                                        activityForms[
-                                                            city.id
-                                                        ].time
-                                                    }
-                                                    onChange={(event) =>
-                                                        handleActivityChange(
-                                                            city.id,
-                                                            event
-                                                        )
-                                                    }
-                                                />
-
-                                            </div>
-
-                                        </div>
-
-
-                                        <div className="form-group">
-
-                                            <label>
-                                                Location
-                                            </label>
-
-                                            <input
-                                                type="text"
-                                                name="location"
-                                                placeholder="e.g. Amer, Jaipur"
-                                                value={
-                                                    activityForms[
-                                                        city.id
-                                                    ].location
-                                                }
-                                                onChange={(event) =>
-                                                    handleActivityChange(
-                                                        city.id,
-                                                        event
-                                                    )
-                                                }
-                                            />
-
-                                        </div>
-
-
-                                        <div className="form-group">
-
-                                            <label>
-                                                Estimated cost
-                                            </label>
-
-                                            <div className="budget-input">
-
-                                                <span>₹</span>
-
-                                                <input
-                                                    type="number"
-                                                    min="0"
-                                                    name="estimated_cost"
-                                                    placeholder="500"
-                                                    value={
-                                                        activityForms[
-                                                            city.id
-                                                        ].estimated_cost
-                                                    }
-                                                    onChange={(event) =>
-                                                        handleActivityChange(
-                                                            city.id,
-                                                            event
-                                                        )
-                                                    }
-                                                />
-
-                                            </div>
-
-                                        </div>
-
-
-                                        <div className="form-group">
-
-                                            <label>
-                                                Notes
-                                            </label>
-
-                                            <textarea
-                                                name="notes"
-                                                placeholder="Optional notes..."
-                                                value={
-                                                    activityForms[
-                                                        city.id
-                                                    ].notes
-                                                }
-                                                onChange={(event) =>
-                                                    handleActivityChange(
-                                                        city.id,
-                                                        event
-                                                    )
-                                                }
-                                                rows="3"
-                                            />
-
-                                        </div>
-
-
-                                        <div className="trip-card-actions">
-
-                                            <button
-                                                className="primary-button"
-                                                type="submit"
-                                                disabled={
-                                                    savingActivity ===
-                                                    city.id
-                                                }
-                                            >
-                                                <Plus size={17} strokeWidth={2} />
-                                                <span>
-                                                    {savingActivity === city.id
-                                                        ? "Adding..."
-                                                        : "Add Activity"}
-                                                </span>
-                                            </button>
-
-                                            <button
-                                                className="secondary-button"
-                                                type="button"
-                                                onClick={() =>
-                                                    hideActivityForm(
-                                                        city.id
-                                                    )
-                                                }
-                                            >
-                                                <X size={16} strokeWidth={2} />
-                                                <span>Cancel</span>
-                                            </button>
-
-                                        </div>
-
-                                    </form>
-
-                                )}
-
-
-                                {/* Activities List */}
-
-                                {city.activities &&
-                                city.activities.length > 0 ? (
-
-                                    <div className="activity-list">
-
-                                        {city.activities.map(
-                                            activity => (
-
-                                                <div
-                                                    className="activity-card"
-                                                    key={
-                                                        activity.id
                                                     }
                                                 >
+                                                    + Add Activity
+                                                </button>
 
-                                                    <div>
+                                            )}
 
-                                                        <h4>
-                                                            {activity.name}
-                                                        </h4>
+                                        </div>
 
-                                                        <div className="activity-meta">
 
-                                                            {activity.date && (
-                                                                <span>
-                                                                    <CalendarDays size={15} strokeWidth={2} />
-                                                                    {formatDate(activity.date)}
-                                                                </span>
-                                                            )}
+                                        {/* Activity form */}
 
-                                                            {activity.time && (
-                                                                <span>
-                                                                    <Clock3 size={15} strokeWidth={2} />
-                                                                    {activity.time}
-                                                                </span>
-                                                            )}
+                                        {activityForm && (
 
-                                                            {activity.location && (
-                                                                <span>
-                                                                    <MapPinHouse size={15} strokeWidth={2} />
-                                                                    {activity.location}
-                                                                </span>
-                                                            )}
+                                            <form
+                                                className="activity-form"
+                                                onSubmit={event =>
+                                                    handleCreateActivity(
+                                                        city,
+                                                        event
+                                                    )
+                                                }
+                                            >
 
-                                                        </div>
+                                                <div className="form-group">
 
-                                                        {activity.notes && (
-                                                            <small>
-                                                                {
-                                                                    activity.notes
-                                                                }
-                                                            </small>
-                                                        )}
+                                                    <label>
+                                                        Activity name *
+                                                    </label>
+
+                                                    <input
+                                                        type="text"
+                                                        name="name"
+                                                        placeholder="e.g. Amber Fort"
+                                                        value={
+                                                            activityForm.name
+                                                        }
+                                                        onChange={event =>
+                                                            handleActivityChange(
+                                                                city.id,
+                                                                event
+                                                            )
+                                                        }
+                                                    />
+
+                                                </div>
+
+
+                                                <div className="date-grid">
+
+                                                    <div className="form-group">
+
+                                                        <label>
+                                                            Date
+                                                        </label>
+
+                                                        <input
+                                                            type="date"
+                                                            name="date"
+                                                            min={
+                                                                city.arrival_date
+                                                            }
+                                                            max={
+                                                                city.departure_date
+                                                            }
+                                                            value={
+                                                                activityForm.date
+                                                            }
+                                                            onChange={event =>
+                                                                handleActivityChange(
+                                                                    city.id,
+                                                                    event
+                                                                )
+                                                            }
+                                                        />
 
                                                     </div>
 
 
-                                                    <div>
+                                                    <div className="form-group">
 
-                                                        {activity.estimated_cost >
-                                                            0 && (
-                                                            <span className="activity-cost">
-                                                                <Wallet size={16} strokeWidth={2} />
-                                                                <span>
-                                                                    ₹{activity.estimated_cost.toLocaleString("en-IN")}
-                                                                </span>
-                                                            </span>
-                                                        )}
+                                                        <label>
+                                                            Time
+                                                        </label>
 
-                                                        <button
-                                                            className="delete-button"
-                                                            type="button"
-                                                            onClick={() =>
-                                                                handleDeleteActivity(
-                                                                    city,
-                                                                    activity
+                                                        <input
+                                                            type="time"
+                                                            name="time"
+                                                            value={
+                                                                activityForm.time
+                                                            }
+                                                            onChange={event =>
+                                                                handleActivityChange(
+                                                                    city.id,
+                                                                    event
                                                                 )
                                                             }
-                                                        >
-                                                            <Trash2 size={16} strokeWidth={2} />
-                                                            <span>Delete</span>
-                                                        </button>
+                                                        />
 
                                                     </div>
 
                                                 </div>
 
+
+                                                <div className="form-group">
+
+                                                    <label>
+                                                        Location
+                                                    </label>
+
+                                                    <input
+                                                        type="text"
+                                                        name="location"
+                                                        placeholder="e.g. Amer Road"
+                                                        value={
+                                                            activityForm.location
+                                                        }
+                                                        onChange={event =>
+                                                            handleActivityChange(
+                                                                city.id,
+                                                                event
+                                                            )
+                                                        }
+                                                    />
+
+                                                </div>
+
+
+                                                <div className="form-group">
+
+                                                    <label>
+                                                        Estimated cost
+                                                    </label>
+
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        name="estimated_cost"
+                                                        placeholder="1000"
+                                                        value={
+                                                            activityForm.estimated_cost
+                                                        }
+                                                        onChange={event =>
+                                                            handleActivityChange(
+                                                                city.id,
+                                                                event
+                                                            )
+                                                        }
+                                                    />
+
+                                                </div>
+
+
+                                                <div className="form-group">
+
+                                                    <label>
+                                                        Notes
+                                                    </label>
+
+                                                    <textarea
+                                                        name="notes"
+                                                        rows="3"
+                                                        placeholder="Activity notes..."
+                                                        value={
+                                                            activityForm.notes
+                                                        }
+                                                        onChange={event =>
+                                                            handleActivityChange(
+                                                                city.id,
+                                                                event
+                                                            )
+                                                        }
+                                                    />
+
+                                                </div>
+
+
+                                                <div className="form-actions">
+
+                                                    <button
+                                                        className="primary-button"
+                                                        type="submit"
+                                                        disabled={
+                                                            savingActivity ===
+                                                            city.id
+                                                        }
+                                                    >
+
+                                                        {savingActivity ===
+                                                        city.id
+                                                            ? "Adding..."
+                                                            : "Add Activity"}
+
+                                                    </button>
+
+
+                                                    <button
+                                                        className="secondary-button"
+                                                        type="button"
+                                                        onClick={() =>
+                                                            closeActivityForm(
+                                                                city.id
+                                                            )
+                                                        }
+                                                    >
+                                                        Cancel
+                                                    </button>
+
+                                                </div>
+
+                                            </form>
+
+                                        )}
+
+
+                                        {/* Existing activities */}
+
+                                        {activities.length === 0 ? (
+
+                                            !activityForm && (
+
+                                                <div className="no-activities">
+
+                                                    <p>
+                                                        No activities added yet.
+                                                    </p>
+
+                                                </div>
+
                                             )
+
+                                        ) : (
+
+                                            <div className="activities-list">
+
+                                                {activities.map(
+                                                    activity => (
+
+                                                        <div
+                                                            className="activity-card"
+                                                            key={
+                                                                activity.id
+                                                            }
+                                                        >
+
+                                                            <div className="activity-content">
+
+                                                                <h4>
+                                                                    {
+                                                                        activity.name
+                                                                    }
+                                                                </h4>
+
+
+                                                                <div className="activity-meta">
+
+                                                                    {activity.date && (
+
+                                                                        <span>
+                                                                            📅{" "}
+                                                                            {formatDate(
+                                                                                activity.date
+                                                                            )}
+                                                                        </span>
+
+                                                                    )}
+
+
+                                                                    {activity.time && (
+
+                                                                        <span>
+                                                                            🕐{" "}
+                                                                            {
+                                                                                activity.time
+                                                                            }
+                                                                        </span>
+
+                                                                    )}
+
+
+                                                                    {activity.location && (
+
+                                                                        <span>
+                                                                            📍{" "}
+                                                                            {
+                                                                                activity.location
+                                                                            }
+                                                                        </span>
+
+                                                                    )}
+
+                                                                </div>
+
+
+                                                                {activity.notes && (
+
+                                                                    <p className="activity-notes">
+                                                                        📝{" "}
+                                                                        {
+                                                                            activity.notes
+                                                                        }
+                                                                    </p>
+
+                                                                )}
+
+                                                            </div>
+
+
+                                                            <div className="activity-actions">
+
+                                                                <span className="activity-cost">
+
+                                                                    ₹
+                                                                    {Number(
+                                                                        activity.estimated_cost ||
+                                                                        0
+                                                                    ).toLocaleString(
+                                                                        "en-IN"
+                                                                    )}
+
+                                                                </span>
+
+
+                                                                <button
+                                                                    className="delete-button"
+                                                                    type="button"
+                                                                    onClick={() =>
+                                                                        handleDeleteActivity(
+                                                                            city,
+                                                                            activity
+                                                                        )
+                                                                    }
+                                                                >
+                                                                    🗑️ Delete
+                                                                </button>
+
+                                                            </div>
+
+                                                        </div>
+
+                                                    )
+                                                )}
+
+                                            </div>
+
                                         )}
 
                                     </div>
 
-                                ) : (
-
-                                    !activityForms[city.id] && (
-
-                                        <p className="empty-activities">
-                                            No activities added yet.
-                                        </p>
-
-                                    )
-
-                                )}
+                                </div>
 
                             </div>
 
-                        </div>
+                        );
 
-                    ))}
+                    })}
 
                 </div>
 
@@ -1084,5 +1376,6 @@ function TripBuilder({ tripId, onBack }) {
         </div>
     );
 }
+
 
 export default TripBuilder;
