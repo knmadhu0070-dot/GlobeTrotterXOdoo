@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { deleteTrip, getTrips } from "../services/trips";
 
 function formatDate(dateString) {
-
     const date = new Date(`${dateString}T00:00:00`);
 
     return date.toLocaleDateString("en-IN", {
@@ -12,9 +11,7 @@ function formatDate(dateString) {
     });
 }
 
-
 function calculateDays(start, end) {
-
     const startDate = new Date(`${start}T00:00:00`);
     const endDate = new Date(`${end}T00:00:00`);
 
@@ -27,8 +24,11 @@ function calculateDays(start, end) {
     return difference;
 }
 
-
-function MyTrips({ onBack, onCreateTrip }) {
+function MyTrips({
+    onBack,
+    onCreateTrip,
+    onOpenTrip
+}) {
 
     const [trips, setTrips] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -39,14 +39,17 @@ function MyTrips({ onBack, onCreateTrip }) {
         try {
 
             setLoading(true);
+            setError("");
 
             const data = await getTrips();
 
-            setTrips(data.trips);
+            setTrips(data.trips || []);
 
         } catch (error) {
 
-            setError(error.message);
+            setError(
+                error.message || "Failed to load your trips."
+            );
 
         } finally {
 
@@ -54,6 +57,7 @@ function MyTrips({ onBack, onCreateTrip }) {
 
         }
     }
+
 
     useEffect(() => {
         loadTrips();
@@ -74,26 +78,56 @@ function MyTrips({ onBack, onCreateTrip }) {
 
             await deleteTrip(trip.id);
 
-            setTrips(
-                trips.filter(
+            setTrips(currentTrips =>
+                currentTrips.filter(
                     item => item.id !== trip.id
                 )
             );
 
         } catch (error) {
 
-            setError(error.message);
+            setError(
+                error.message || "Failed to delete trip."
+            );
 
         }
     }
 
 
+    function handleOpenTrip(trip) {
+
+        if (!trip || !trip.id) {
+
+            setError(
+                "Unable to open this trip."
+            );
+
+            return;
+        }
+
+        if (typeof onOpenTrip !== "function") {
+
+            setError(
+                "Trip Builder navigation is not available."
+            );
+
+            return;
+        }
+
+        setError("");
+
+        onOpenTrip(trip.id);
+    }
+
+
     if (loading) {
+
         return (
             <div className="page-loading">
                 Loading your trips...
             </div>
         );
+
     }
 
 
@@ -111,21 +145,31 @@ function MyTrips({ onBack, onCreateTrip }) {
             </button>
 
 
+            {/* Header */}
+
             <div className="trips-header">
 
                 <div>
-                    <p className="eyebrow">YOUR JOURNEYS</p>
 
-                    <h1>My Trips</h1>
+                    <p className="eyebrow">
+                        YOUR JOURNEYS
+                    </p>
+
+                    <h1>
+                        My Trips
+                    </h1>
 
                     <p className="page-subtitle">
                         Your adventures, all in one place.
                     </p>
+
                 </div>
+
 
                 <button
                     className="primary-button create-trip-small"
                     onClick={onCreateTrip}
+                    type="button"
                 >
                     + New Trip
                 </button>
@@ -133,12 +177,18 @@ function MyTrips({ onBack, onCreateTrip }) {
             </div>
 
 
+            {/* Error */}
+
             {error && (
+
                 <div className="error-message">
                     {error}
                 </div>
+
             )}
 
+
+            {/* Empty state */}
 
             {trips.length === 0 ? (
 
@@ -148,7 +198,9 @@ function MyTrips({ onBack, onCreateTrip }) {
                         🗺️
                     </div>
 
-                    <h2>Your journey starts here</h2>
+                    <h2>
+                        Your journey starts here
+                    </h2>
 
                     <p>
                         Create your first trip and start
@@ -158,6 +210,7 @@ function MyTrips({ onBack, onCreateTrip }) {
                     <button
                         className="primary-button empty-button"
                         onClick={onCreateTrip}
+                        type="button"
                     >
                         Plan Your First Trip
                     </button>
@@ -165,6 +218,8 @@ function MyTrips({ onBack, onCreateTrip }) {
                 </div>
 
             ) : (
+
+                /* Trips */
 
                 <div className="trips-grid">
 
@@ -175,52 +230,95 @@ function MyTrips({ onBack, onCreateTrip }) {
                             key={trip.id}
                         >
 
+                            {/* Trip image */}
+
                             <div className="trip-card-image">
                                 🏔️
                             </div>
 
+
+                            {/* Trip content */}
+
                             <div className="trip-card-content">
 
-                                <h2>{trip.name}</h2>
+                                <h2>
+                                    {trip.name}
+                                </h2>
+
 
                                 <p className="trip-dates">
-                                    {formatDate(trip.start_date)}
+
+                                    {formatDate(
+                                        trip.start_date
+                                    )}
+
                                     {" — "}
-                                    {formatDate(trip.end_date)}
+
+                                    {formatDate(
+                                        trip.end_date
+                                    )}
+
                                 </p>
+
+
+                                {/* Trip metadata */}
 
                                 <div className="trip-meta">
 
                                     <span>
+
                                         📅{" "}
+
                                         {calculateDays(
                                             trip.start_date,
                                             trip.end_date
-                                        )} days
+                                        )}
+
+                                        {" days"}
+
                                     </span>
 
+
                                     <span>
+
                                         💰 ₹
-                                        {trip.budget.toLocaleString(
+
+                                        {Number(
+                                            trip.budget || 0
+                                        ).toLocaleString(
                                             "en-IN"
                                         )}
+
                                     </span>
 
                                 </div>
 
+
+                                {/* Actions */}
+
                                 <div className="trip-card-actions">
+
+                                    {/* Open Trip */}
 
                                     <button
                                         className="secondary-button"
+                                        onClick={() =>
+                                            handleOpenTrip(trip)
+                                        }
+                                        type="button"
                                     >
                                         Open Trip
                                     </button>
+
+
+                                    {/* Delete Trip */}
 
                                     <button
                                         className="delete-button"
                                         onClick={() =>
                                             handleDelete(trip)
                                         }
+                                        type="button"
                                     >
                                         Delete
                                     </button>

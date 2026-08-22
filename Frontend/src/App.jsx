@@ -5,6 +5,7 @@ import Signup from "./pages/Signup";
 import Dashboard from "./pages/Dashboard";
 import CreateTrip from "./pages/CreateTrip";
 import MyTrips from "./pages/MyTrips";
+import TripBuilder from "./pages/TripBuilder";
 
 import { getCurrentUser } from "./services/auth";
 
@@ -15,6 +16,13 @@ function App() {
     const [user, setUser] = useState(null);
     const [checkingSession, setCheckingSession] = useState(true);
 
+    // Trip currently opened in Trip Builder
+    const [selectedTripId, setSelectedTripId] = useState(null);
+
+
+    // ---------------------------------------------------------
+    // Check existing login session
+    // ---------------------------------------------------------
 
     useEffect(() => {
 
@@ -44,6 +52,10 @@ function App() {
     }, []);
 
 
+    // ---------------------------------------------------------
+    // Loading
+    // ---------------------------------------------------------
+
     if (checkingSession) {
 
         return (
@@ -60,6 +72,10 @@ function App() {
 
     }
 
+
+    // ---------------------------------------------------------
+    // Signup
+    // ---------------------------------------------------------
 
     if (page === "signup") {
 
@@ -83,6 +99,10 @@ function App() {
     }
 
 
+    // ---------------------------------------------------------
+    // Create Trip
+    // ---------------------------------------------------------
+
     if (page === "create-trip") {
 
         return (
@@ -102,6 +122,10 @@ function App() {
     }
 
 
+    // ---------------------------------------------------------
+    // My Trips
+    // ---------------------------------------------------------
+
     if (page === "my-trips") {
 
         return (
@@ -115,11 +139,51 @@ function App() {
                     setPage("create-trip")
                 }
 
+                onOpenTrip={(tripId) => {
+
+                    setSelectedTripId(tripId);
+                    setPage("trip-builder");
+
+                }}
+
             />
         );
 
     }
 
+
+    // ---------------------------------------------------------
+    // Trip Builder
+    // ---------------------------------------------------------
+
+    if (page === "trip-builder") {
+
+        // Safety guard: never render TripBuilder without a trip.
+        if (!selectedTripId) {
+
+            setPage("my-trips");
+
+            return null;
+        }
+
+        return (
+            <TripBuilder
+
+                tripId={selectedTripId}
+
+                onBack={() =>
+                    setPage("my-trips")
+                }
+
+            />
+        );
+
+    }
+
+
+    // ---------------------------------------------------------
+    // Dashboard
+    // ---------------------------------------------------------
 
     if (page === "dashboard" && user) {
 
@@ -131,6 +195,7 @@ function App() {
                 onLogout={() => {
 
                     setUser(null);
+                    setSelectedTripId(null);
                     setPage("login");
 
                 }}
@@ -148,6 +213,10 @@ function App() {
 
     }
 
+
+    // ---------------------------------------------------------
+    // Login
+    // ---------------------------------------------------------
 
     return (
         <Login

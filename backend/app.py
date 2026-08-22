@@ -4,7 +4,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import re
 import os
 from datetime import datetime
-from models import db, User, Trip
+
+from models import db, User, Trip, City, Activity
 
 
 app = Flask(__name__)
@@ -18,11 +19,8 @@ DATABASE_PATH = os.path.join(BASE_DIR, "globetrotter.db")
 
 app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{DATABASE_PATH}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
-# Used for Flask sessions
 app.config["SECRET_KEY"] = "globetrotter-hackathon-secret-key"
 
-# Allow React frontend to communicate with Flask
 CORS(
     app,
     origins=["http://localhost:5173"],
@@ -49,13 +47,38 @@ def valid_email(email):
     return re.match(pattern, email) is not None
 
 
+def parse_date(value):
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+def cities_overlap(arrival_a, departure_a, arrival_b, departure_b):
+    # Same-day handoff is allowed: A 26-29 and B 29-31.
+    return arrival_a < departure_b and arrival_b < departure_a
+
+
+def find_overlapping_city(trip_id, arrival_date, departure_date, exclude_city_id=None):
+    query = City.query.filter_by(trip_id=trip_id)
+
+    if exclude_city_id is not None:
+        query = query.filter(City.id != exclude_city_id)
+
+    for existing_city in query.all():
+        if cities_overlap(
+            arrival_date,
+            departure_date,
+            existing_city.arrival_date,
+            existing_city.departure_date
+        ):
+            return existing_city
+
+    return None
+
+
 # ============================================================
 # AUTHENTICATION
 # ============================================================
-
-# -----------------------------
-# Signup
-# -----------------------------
 
 @app.route("/api/auth/signup", methods=["POST"])
 def signup():
@@ -73,70 +96,57 @@ def signup():
     password = data.get("password", "")
     confirm_password = data.get("confirmPassword", "")
 
-    # R1 — Name required
     if not name:
         return jsonify({
             "success": False,
             "message": "Name is required."
         }), 400
 
-    # R2 — Email required
     if not email:
         return jsonify({
             "success": False,
             "message": "Email is required."
         }), 400
 
-    # R3 — Email format
     if not valid_email(email):
         return jsonify({
             "success": False,
             "message": "Please enter a valid email address."
         }), 400
 
-    # R4 — Email uniqueness
-    existing_user = User.query.filter_by(email=email).first()
-
-    if existing_user:
+    if User.query.filter_by(email=email).first():
         return jsonify({
             "success": False,
             "message": "An account with this email already exists."
         }), 409
 
-    # R5 — Password required
     if not password:
         return jsonify({
             "success": False,
             "message": "Password is required."
         }), 400
 
-    # R6 — Minimum 8 characters
     if len(password) < 8:
         return jsonify({
             "success": False,
             "message": "Password must be at least 8 characters."
         }), 400
 
-    # R7 — Password confirmation
     if password != confirm_password:
         return jsonify({
             "success": False,
             "message": "Passwords do not match."
         }), 400
 
-    # R8 — Never store plain password
-    password_hash = generate_password_hash(password)
-
     new_user = User(
         name=name,
         email=email,
-        password_hash=password_hash
+        password_hash=generate_password_hash(password)
     )
 
     db.session.add(new_user)
     db.session.commit()
 
-    # R9 — Automatically log the user in
     session["user_id"] = new_user.id
 
     return jsonify({
@@ -145,10 +155,6 @@ def signup():
         "user": new_user.to_dict()
     }), 201
 
-
-# -----------------------------
-# Login
-# -----------------------------
 
 @app.route("/api/auth/login", methods=["POST"])
 def login():
@@ -164,17 +170,14 @@ def login():
     email = data.get("email", "").strip().lower()
     password = data.get("password", "")
 
-    # R10 — Both fields required
     if not email or not password:
         return jsonify({
             "success": False,
             "message": "Email and password are required."
         }), 400
 
-    # R11 — Find user
     user = User.query.filter_by(email=email).first()
 
-    # R12 + R13 — Verify credentials
     if not user or not check_password_hash(
         user.password_hash,
         password
@@ -184,7 +187,6 @@ def login():
             "message": "Invalid email or password."
         }), 401
 
-    # R14 — Create session
     session["user_id"] = user.id
 
     return jsonify({
@@ -193,10 +195,6 @@ def login():
         "user": user.to_dict()
     })
 
-
-# -----------------------------
-# Current logged-in user
-# -----------------------------
 
 @app.route("/api/auth/me", methods=["GET"])
 def current_user():
@@ -225,10 +223,6 @@ def current_user():
     })
 
 
-# -----------------------------
-# Logout
-# -----------------------------
-
 @app.route("/api/auth/logout", methods=["POST"])
 def logout():
 
@@ -243,10 +237,6 @@ def logout():
 # ============================================================
 # TRIPS
 # ============================================================
-
-# -----------------------------
-# Create Trip
-# -----------------------------
 
 @app.route("/api/trips", methods=["POST"])
 def create_trip():
@@ -269,52 +259,29 @@ def create_trip():
 
     name = data.get("name", "").strip()
     description = data.get("description", "").strip()
-    start_date = data.get("start_date")
-    end_date = data.get("end_date")
-    budget = data.get("budget", 0)
+    start_date = parse_date(data.get("start_date"))
+    end_date = parse_date(data.get("end_date"))
 
-    # Trip name required
     if not name:
         return jsonify({
             "success": False,
             "message": "Trip name is required."
         }), 400
 
-    # Dates required
     if not start_date or not end_date:
         return jsonify({
             "success": False,
             "message": "Start date and end date are required."
         }), 400
 
-    # Parse dates
-    try:
-        start_date = datetime.strptime(
-            start_date,
-            "%Y-%m-%d"
-        ).date()
-
-        end_date = datetime.strptime(
-            end_date,
-            "%Y-%m-%d"
-        ).date()
-
-    except ValueError:
-        return jsonify({
-            "success": False,
-            "message": "Invalid date format."
-        }), 400
-
-    # End date cannot be before start date
     if end_date < start_date:
         return jsonify({
             "success": False,
             "message": "End date cannot be before start date."
         }), 400
 
-    # Validate budget
     try:
-        budget = float(budget)
+        budget = float(data.get("budget", 0))
     except (ValueError, TypeError):
         return jsonify({
             "success": False,
@@ -346,10 +313,6 @@ def create_trip():
     }), 201
 
 
-# -----------------------------
-# Get user's trips
-# -----------------------------
-
 @app.route("/api/trips", methods=["GET"])
 def get_trips():
 
@@ -372,10 +335,6 @@ def get_trips():
         "trips": [trip.to_dict() for trip in trips]
     })
 
-
-# -----------------------------
-# Get single trip
-# -----------------------------
 
 @app.route("/api/trips/<int:trip_id>", methods=["GET"])
 def get_trip(trip_id):
@@ -405,10 +364,6 @@ def get_trip(trip_id):
     })
 
 
-# -----------------------------
-# Update Trip
-# -----------------------------
-
 @app.route("/api/trips/<int:trip_id>", methods=["PUT"])
 def update_trip(trip_id):
 
@@ -433,14 +388,7 @@ def update_trip(trip_id):
 
     data = request.get_json()
 
-    if not data:
-        return jsonify({
-            "success": False,
-            "message": "No data received."
-        }), 400
-
     if "name" in data:
-
         name = data["name"].strip()
 
         if not name:
@@ -455,32 +403,26 @@ def update_trip(trip_id):
         trip.description = data["description"].strip()
 
     if "start_date" in data:
+        date = parse_date(data["start_date"])
 
-        try:
-            trip.start_date = datetime.strptime(
-                data["start_date"],
-                "%Y-%m-%d"
-            ).date()
-
-        except ValueError:
+        if not date:
             return jsonify({
                 "success": False,
                 "message": "Invalid start date."
             }), 400
 
+        trip.start_date = date
+
     if "end_date" in data:
+        date = parse_date(data["end_date"])
 
-        try:
-            trip.end_date = datetime.strptime(
-                data["end_date"],
-                "%Y-%m-%d"
-            ).date()
-
-        except ValueError:
+        if not date:
             return jsonify({
                 "success": False,
                 "message": "Invalid end date."
             }), 400
+
+        trip.end_date = date
 
     if trip.end_date < trip.start_date:
         return jsonify({
@@ -491,19 +433,20 @@ def update_trip(trip_id):
     if "budget" in data:
 
         try:
-            trip.budget = float(data["budget"])
-
+            budget = float(data["budget"])
         except (ValueError, TypeError):
             return jsonify({
                 "success": False,
                 "message": "Budget must be a valid number."
             }), 400
 
-        if trip.budget < 0:
+        if budget < 0:
             return jsonify({
                 "success": False,
                 "message": "Budget cannot be negative."
             }), 400
+
+        trip.budget = budget
 
     db.session.commit()
 
@@ -513,10 +456,6 @@ def update_trip(trip_id):
         "trip": trip.to_dict()
     })
 
-
-# -----------------------------
-# Delete Trip
-# -----------------------------
 
 @app.route("/api/trips/<int:trip_id>", methods=["DELETE"])
 def delete_trip(trip_id):
@@ -550,24 +489,518 @@ def delete_trip(trip_id):
 
 
 # ============================================================
+# CITIES
+# ============================================================
+
+@app.route("/api/trips/<int:trip_id>/cities", methods=["POST"])
+def create_city(trip_id):
+
+    user_id = session.get("user_id")
+
+    if not user_id:
+        return jsonify({
+            "success": False,
+            "message": "Not authenticated."
+        }), 401
+
+    trip = Trip.query.filter_by(
+        id=trip_id,
+        user_id=user_id
+    ).first()
+
+    if not trip:
+        return jsonify({
+            "success": False,
+            "message": "Trip not found."
+        }), 404
+
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            "success": False,
+            "message": "No data received."
+        }), 400
+
+    name = data.get("name", "").strip()
+    arrival_date = parse_date(data.get("arrival_date"))
+    departure_date = parse_date(data.get("departure_date"))
+    notes = data.get("notes", "").strip()
+
+    if not name:
+        return jsonify({
+            "success": False,
+            "message": "City name is required."
+        }), 400
+
+    if not arrival_date or not departure_date:
+        return jsonify({
+            "success": False,
+            "message": "Arrival date and departure date are required."
+        }), 400
+
+    if departure_date < arrival_date:
+        return jsonify({
+            "success": False,
+            "message": "Departure date cannot be before arrival date."
+        }), 400
+
+    if arrival_date < trip.start_date or departure_date > trip.end_date:
+        return jsonify({
+            "success": False,
+            "message": "City dates must be within the trip dates."
+        }), 400
+
+    overlapping_city = find_overlapping_city(
+        trip.id,
+        arrival_date,
+        departure_date
+    )
+
+    if overlapping_city:
+        return jsonify({
+            "success": False,
+            "message": (
+                f"City dates overlap with {overlapping_city.name} "
+                f"({overlapping_city.arrival_date.isoformat()} — "
+                f"{overlapping_city.departure_date.isoformat()})."
+            )
+        }), 409
+
+    city = City(
+        trip_id=trip.id,
+        name=name,
+        arrival_date=arrival_date,
+        departure_date=departure_date,
+        notes=notes
+    )
+
+    db.session.add(city)
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "message": "City added successfully.",
+        "city": city.to_dict()
+    }), 201
+
+
+@app.route("/api/trips/<int:trip_id>/cities", methods=["GET"])
+def get_cities(trip_id):
+
+    user_id = session.get("user_id")
+
+    if not user_id:
+        return jsonify({
+            "success": False,
+            "message": "Not authenticated."
+        }), 401
+
+    trip = Trip.query.filter_by(
+        id=trip_id,
+        user_id=user_id
+    ).first()
+
+    if not trip:
+        return jsonify({
+            "success": False,
+            "message": "Trip not found."
+        }), 404
+
+    cities = City.query.filter_by(
+        trip_id=trip.id
+    ).order_by(
+        City.arrival_date.asc()
+    ).all()
+
+    return jsonify({
+        "success": True,
+        "cities": [city.to_dict() for city in cities]
+    })
+
+
+@app.route("/api/cities/<int:city_id>", methods=["PUT"])
+def update_city(city_id):
+
+    user_id = session.get("user_id")
+
+    if not user_id:
+        return jsonify({
+            "success": False,
+            "message": "Not authenticated."
+        }), 401
+
+    city = db.session.get(City, city_id)
+
+    if not city or city.trip.user_id != user_id:
+        return jsonify({
+            "success": False,
+            "message": "City not found."
+        }), 404
+
+    data = request.get_json()
+
+    if "name" in data:
+        name = data["name"].strip()
+
+        if not name:
+            return jsonify({
+                "success": False,
+                "message": "City name cannot be empty."
+            }), 400
+
+        city.name = name
+
+    if "arrival_date" in data:
+        date = parse_date(data["arrival_date"])
+
+        if not date:
+            return jsonify({
+                "success": False,
+                "message": "Invalid arrival date."
+            }), 400
+
+        city.arrival_date = date
+
+    if "departure_date" in data:
+        date = parse_date(data["departure_date"])
+
+        if not date:
+            return jsonify({
+                "success": False,
+                "message": "Invalid departure date."
+            }), 400
+
+        city.departure_date = date
+
+    if city.departure_date < city.arrival_date:
+        return jsonify({
+            "success": False,
+            "message": "Departure date cannot be before arrival date."
+        }), 400
+
+    if "notes" in data:
+        city.notes = data["notes"].strip()
+
+    if (
+        city.arrival_date < city.trip.start_date
+        or city.departure_date > city.trip.end_date
+    ):
+        return jsonify({
+            "success": False,
+            "message": "City dates must be within the trip dates."
+        }), 400
+
+    overlapping_city = find_overlapping_city(
+        city.trip_id,
+        city.arrival_date,
+        city.departure_date,
+        exclude_city_id=city.id
+    )
+
+    if overlapping_city:
+        return jsonify({
+            "success": False,
+            "message": (
+                f"City dates overlap with {overlapping_city.name} "
+                f"({overlapping_city.arrival_date.isoformat()} — "
+                f"{overlapping_city.departure_date.isoformat()})."
+            )
+        }), 409
+
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "message": "City updated successfully.",
+        "city": city.to_dict()
+    })
+
+
+@app.route("/api/cities/<int:city_id>", methods=["DELETE"])
+def delete_city(city_id):
+
+    user_id = session.get("user_id")
+
+    if not user_id:
+        return jsonify({
+            "success": False,
+            "message": "Not authenticated."
+        }), 401
+
+    city = db.session.get(City, city_id)
+
+    if not city or city.trip.user_id != user_id:
+        return jsonify({
+            "success": False,
+            "message": "City not found."
+        }), 404
+
+    db.session.delete(city)
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "message": "City deleted successfully."
+    })
+
+
+
+
+# ============================================================
+# ACTIVITIES
+# ============================================================
+
+@app.route("/api/cities/<int:city_id>/activities", methods=["POST"])
+def create_activity(city_id):
+
+    user_id = session.get("user_id")
+
+    if not user_id:
+        return jsonify({
+            "success": False,
+            "message": "Not authenticated."
+        }), 401
+
+    city = db.session.get(City, city_id)
+
+    if not city or city.trip.user_id != user_id:
+        return jsonify({
+            "success": False,
+            "message": "City not found."
+        }), 404
+
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            "success": False,
+            "message": "No data received."
+        }), 400
+
+    name = data.get("name", "").strip()
+    date = parse_date(data.get("date")) if data.get("date") else None
+    time = data.get("time", "").strip()
+    location = data.get("location", "").strip()
+    notes = data.get("notes", "").strip()
+
+    if not name:
+        return jsonify({
+            "success": False,
+            "message": "Activity name is required."
+        }), 400
+
+    if data.get("date") and not date:
+        return jsonify({
+            "success": False,
+            "message": "Invalid activity date."
+        }), 400
+
+    if date and (date < city.arrival_date or date > city.departure_date):
+        return jsonify({
+            "success": False,
+            "message": "Activity date must be within the city dates."
+        }), 400
+
+    try:
+        estimated_cost = float(data.get("estimated_cost", 0))
+    except (ValueError, TypeError):
+        return jsonify({
+            "success": False,
+            "message": "Estimated cost must be a valid number."
+        }), 400
+
+    if estimated_cost < 0:
+        return jsonify({
+            "success": False,
+            "message": "Estimated cost cannot be negative."
+        }), 400
+
+    activity = Activity(
+        city_id=city.id,
+        name=name,
+        date=date,
+        time=time,
+        location=location,
+        notes=notes,
+        estimated_cost=estimated_cost
+    )
+
+    db.session.add(activity)
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "message": "Activity added successfully.",
+        "activity": activity.to_dict()
+    }), 201
+
+
+@app.route("/api/cities/<int:city_id>/activities", methods=["GET"])
+def get_activities(city_id):
+
+    user_id = session.get("user_id")
+
+    if not user_id:
+        return jsonify({
+            "success": False,
+            "message": "Not authenticated."
+        }), 401
+
+    city = db.session.get(City, city_id)
+
+    if not city or city.trip.user_id != user_id:
+        return jsonify({
+            "success": False,
+            "message": "City not found."
+        }), 404
+
+    activities = Activity.query.filter_by(
+        city_id=city.id
+    ).order_by(
+        Activity.date.asc(),
+        Activity.time.asc()
+    ).all()
+
+    return jsonify({
+        "success": True,
+        "activities": [activity.to_dict() for activity in activities]
+    })
+
+
+@app.route("/api/activities/<int:activity_id>", methods=["PUT"])
+def update_activity(activity_id):
+
+    user_id = session.get("user_id")
+
+    if not user_id:
+        return jsonify({
+            "success": False,
+            "message": "Not authenticated."
+        }), 401
+
+    activity = db.session.get(Activity, activity_id)
+
+    if not activity or not activity.city or activity.city.trip.user_id != user_id:
+        return jsonify({
+            "success": False,
+            "message": "Activity not found."
+        }), 404
+
+    data = request.get_json() or {}
+
+    if "name" in data:
+        name = data["name"].strip()
+
+        if not name:
+            return jsonify({
+                "success": False,
+                "message": "Activity name cannot be empty."
+            }), 400
+
+        activity.name = name
+
+    if "date" in data:
+        if data["date"]:
+            date = parse_date(data["date"])
+
+            if not date:
+                return jsonify({
+                    "success": False,
+                    "message": "Invalid activity date."
+                }), 400
+
+            activity.date = date
+        else:
+            activity.date = None
+
+    if activity.date and (
+        activity.date < activity.city.arrival_date
+        or activity.date > activity.city.departure_date
+    ):
+        return jsonify({
+            "success": False,
+            "message": "Activity date must be within the city dates."
+        }), 400
+
+    if "time" in data:
+        activity.time = data["time"].strip()
+
+    if "location" in data:
+        activity.location = data["location"].strip()
+
+    if "notes" in data:
+        activity.notes = data["notes"].strip()
+
+    if "estimated_cost" in data:
+        try:
+            estimated_cost = float(data["estimated_cost"])
+        except (ValueError, TypeError):
+            return jsonify({
+                "success": False,
+                "message": "Estimated cost must be a valid number."
+            }), 400
+
+        if estimated_cost < 0:
+            return jsonify({
+                "success": False,
+                "message": "Estimated cost cannot be negative."
+            }), 400
+
+        activity.estimated_cost = estimated_cost
+
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "message": "Activity updated successfully.",
+        "activity": activity.to_dict()
+    })
+
+
+@app.route("/api/activities/<int:activity_id>", methods=["DELETE"])
+def delete_activity(activity_id):
+
+    user_id = session.get("user_id")
+
+    if not user_id:
+        return jsonify({
+            "success": False,
+            "message": "Not authenticated."
+        }), 401
+
+    activity = db.session.get(Activity, activity_id)
+
+    if not activity or not activity.city or activity.city.trip.user_id != user_id:
+        return jsonify({
+            "success": False,
+            "message": "Activity not found."
+        }), 404
+
+    db.session.delete(activity)
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "message": "Activity deleted successfully."
+    })
+
+
+# ============================================================
 # HEALTH CHECK
 # ============================================================
 
 @app.route("/api/health", methods=["GET"])
 def health():
-
     return jsonify({
         "success": True,
         "message": "GlobeTrotter backend is running."
     })
 
 
-# -----------------------------
-# Run server
-# -----------------------------
+# ============================================================
+# RUN SERVER
+# ============================================================
 
 if __name__ == "__main__":
-    app.run(
-        debug=True,
-        port=5000
-    )
+    app.run(debug=True, port=5000)
