@@ -1424,7 +1424,9 @@ function TripBuilder({ tripId, onBack }) {
                 H4.1 — ITINERARY
             ================================================= */}
 
+            
             <Itinerary
+                key={`${trip.start_date}-${trip.end_date}`}
                 cities={cities}
                 tripStart={trip.start_date}
                 tripEnd={trip.end_date}
