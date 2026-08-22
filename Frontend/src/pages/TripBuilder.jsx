@@ -9,11 +9,13 @@ import {
     deleteActivity,
 } from "../services/trips";
 
+import Itinerary from "./Itinerary";
+import BudgetSummary from "./BudgetSummary";
+import EditTrip from "./EditTrip";
+
 
 function formatDate(dateString) {
-    if (!dateString) {
-        return "";
-    }
+    if (!dateString) return "";
 
     const date = new Date(`${dateString}T00:00:00`);
 
@@ -29,6 +31,7 @@ function TripBuilder({ tripId, onBack }) {
 
     const [trip, setTrip] = useState(null);
     const [cities, setCities] = useState([]);
+    const [editingTrip, setEditingTrip] = useState(false);
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
@@ -66,8 +69,11 @@ function TripBuilder({ tripId, onBack }) {
                 setLoading(true);
                 setError("");
 
-                const tripResponse = await getTrip(tripId);
-                const citiesResponse = await getCities(tripId);
+                const tripResponse =
+                    await getTrip(tripId);
+
+                const citiesResponse =
+                    await getCities(tripId);
 
                 setTrip(tripResponse.trip);
 
@@ -107,7 +113,10 @@ function TripBuilder({ tripId, onBack }) {
 
     function handleCityChange(event) {
 
-        const { name, value } = event.target;
+        const {
+            name,
+            value
+        } = event.target;
 
         setCityForm({
             ...cityForm,
@@ -129,6 +138,10 @@ function TripBuilder({ tripId, onBack }) {
     }
 
 
+    // =========================================================
+    // CREATE CITY
+    // =========================================================
+
     async function handleCreateCity(event) {
 
         event.preventDefault();
@@ -136,63 +149,78 @@ function TripBuilder({ tripId, onBack }) {
         setError("");
 
         if (!cityForm.name.trim()) {
-            setError("City name is required.");
+
+            setError(
+                "City name is required."
+            );
+
             return;
         }
+
 
         if (
             !cityForm.arrival_date ||
             !cityForm.departure_date
         ) {
+
             setError(
                 "Arrival date and departure date are required."
             );
+
             return;
         }
+
 
         if (
             cityForm.departure_date <
             cityForm.arrival_date
         ) {
+
             setError(
                 "Departure date cannot be before arrival date."
             );
+
             return;
         }
 
-
-        // City must be inside trip dates.
 
         if (
             cityForm.arrival_date <
             trip.start_date
         ) {
+
             setError(
                 "Arrival date must be within the trip dates."
             );
+
             return;
         }
+
 
         if (
             cityForm.departure_date >
             trip.end_date
         ) {
+
             setError(
                 "Departure date must be within the trip dates."
             );
+
             return;
         }
 
 
-        // Prevent overlapping cities.
+        // -----------------------------------------------------
+        // Prevent overlapping cities
+        // -----------------------------------------------------
 
         const overlap = cities.find(city => {
 
             return (
                 cityForm.arrival_date <
                     city.departure_date &&
-                city.arrival_date <
-                    cityForm.departure_date
+                cityForm.departure_date >
+                    city.arrival_date
             );
 
         });
@@ -224,18 +252,21 @@ function TripBuilder({ tripId, onBack }) {
                 );
 
             if (!response.city) {
+
                 throw new Error(
                     "City was not returned by the server."
                 );
+
             }
+
 
             setCities([
                 ...cities,
                 response.city,
             ]);
 
-            resetCityForm();
 
+            resetCityForm();
             setShowCityForm(false);
 
         } catch (error) {
@@ -273,6 +304,7 @@ function TripBuilder({ tripId, onBack }) {
         if (!confirmed) {
             return;
         }
+
 
         try {
 
@@ -347,7 +379,7 @@ function TripBuilder({ tripId, onBack }) {
 
         const {
             name,
-            value,
+            value
         } = event.target;
 
         setActivityForms({
@@ -378,6 +410,7 @@ function TripBuilder({ tripId, onBack }) {
 
         const form =
             activityForms[city.id];
+
 
         if (!form.name.trim()) {
 
@@ -466,8 +499,6 @@ function TripBuilder({ tripId, onBack }) {
             }
 
 
-            // Add activity locally.
-
             setCities(
                 cities.map(item => {
 
@@ -533,6 +564,7 @@ function TripBuilder({ tripId, onBack }) {
             return;
         }
 
+
         try {
 
             setError("");
@@ -540,6 +572,7 @@ function TripBuilder({ tripId, onBack }) {
             await deleteActivity(
                 activity.id
             );
+
 
             setCities(
                 cities.map(item => {
@@ -587,7 +620,11 @@ function TripBuilder({ tripId, onBack }) {
     // =========================================================
     // LOADING
     // =========================================================
+        // =========================================================
+    // EDIT TRIP
+    // =========================================================
 
+    
     if (loading) {
 
         return (
@@ -597,10 +634,30 @@ function TripBuilder({ tripId, onBack }) {
         );
 
     }
+    if (editingTrip) {
 
+        return (
+            <EditTrip
+                trip={trip}
+                cities={cities}
+
+                onCancel={() =>
+                    setEditingTrip(false)
+                }
+
+                onSaved={(updatedTrip) => {
+
+                    setTrip(updatedTrip);
+                    setEditingTrip(false);
+
+                }}
+            />
+        );
+
+    }
 
     // =========================================================
-    // TRIP NOT FOUND
+    // NO TRIP
     // =========================================================
 
     if (!trip) {
@@ -650,32 +707,21 @@ function TripBuilder({ tripId, onBack }) {
             </button>
 
 
-            {/* Header */}
+            {/* =================================================
+                HEADER
+            ================================================= */}
 
-            <div className="trips-header">
+            <div className="trip-builder-actions">
 
-                <div>
-
-                    <p className="eyebrow">
-                        TRIP BUILDER
-                    </p>
-
-                    <h1>
-                        {trip.name}
-                    </h1>
-
-                    <p className="page-subtitle">
-                        📅{" "}
-                        {formatDate(
-                            trip.start_date
-                        )}
-                        {" — "}
-                        {formatDate(
-                            trip.end_date
-                        )}
-                    </p>
-
-                </div>
+                <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() =>
+                        setEditingTrip(true)
+                    }
+                >
+                    ✏️ Edit Trip
+                </button>
 
 
                 <button
@@ -685,31 +731,22 @@ function TripBuilder({ tripId, onBack }) {
 
                         setError("");
 
-                        if (
-                            showCityForm
-                        ) {
+                        if (showCityForm) {
 
-                            setShowCityForm(
-                                false
-                            );
-
+                            setShowCityForm(false);
                             resetCityForm();
 
                         } else {
 
-                            setShowCityForm(
-                                true
-                            );
+                            setShowCityForm(true);
 
                         }
 
                     }}
                 >
-
                     {showCityForm
                         ? "✕ Cancel"
                         : "+ Add City"}
-
                 </button>
 
             </div>
@@ -727,7 +764,7 @@ function TripBuilder({ tripId, onBack }) {
 
 
             {/* =================================================
-                ADD CITY
+                ADD CITY FORM
             ================================================= */}
 
             {showCityForm && (
@@ -741,6 +778,12 @@ function TripBuilder({ tripId, onBack }) {
                     <h2>
                         Add a city
                     </h2>
+
+                    <p className="page-subtitle">
+                        Choose where you will stay during
+                        this part of your journey.
+                    </p>
+
 
                     <form
                         className="trip-form"
@@ -933,7 +976,7 @@ function TripBuilder({ tripId, onBack }) {
 
                                 <div className="trip-card-content">
 
-                                    {/* City header */}
+                                    {/* CITY HEADER */}
 
                                     <div className="city-header">
 
@@ -978,7 +1021,7 @@ function TripBuilder({ tripId, onBack }) {
                                     </div>
 
 
-                                    {/* City notes */}
+                                    {/* CITY NOTES */}
 
                                     {city.notes && (
 
@@ -993,7 +1036,9 @@ function TripBuilder({ tripId, onBack }) {
                                     )}
 
 
-                                    {/* Activities */}
+                                    {/* =================================================
+                                        ACTIVITIES
+                                    ================================================= */}
 
                                     <div className="activities-section">
 
@@ -1002,6 +1047,7 @@ function TripBuilder({ tripId, onBack }) {
                                             <h3>
                                                 Activities
                                             </h3>
+
 
                                             {!activityForm && (
 
@@ -1022,7 +1068,7 @@ function TripBuilder({ tripId, onBack }) {
                                         </div>
 
 
-                                        {/* Activity form */}
+                                        {/* ACTIVITY FORM */}
 
                                         {activityForm && (
 
@@ -1227,7 +1273,7 @@ function TripBuilder({ tripId, onBack }) {
                                         )}
 
 
-                                        {/* Existing activities */}
+                                        {/* EXISTING ACTIVITIES */}
 
                                         {activities.length === 0 ? (
 
@@ -1373,6 +1419,20 @@ function TripBuilder({ tripId, onBack }) {
 
             )}
 
+
+            {/* =================================================
+                H4.1 — ITINERARY
+            ================================================= */}
+
+            <Itinerary
+                cities={cities}
+                tripStart={trip.start_date}
+                tripEnd={trip.end_date}
+            />
+            <BudgetSummary
+                trip={trip}
+                cities={cities}
+            />
         </div>
     );
 }

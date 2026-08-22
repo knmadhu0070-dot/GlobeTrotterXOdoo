@@ -6,6 +6,7 @@ import Dashboard from "./pages/Dashboard";
 import CreateTrip from "./pages/CreateTrip";
 import MyTrips from "./pages/MyTrips";
 import TripBuilder from "./pages/TripBuilder";
+import Explore from "./pages/Explore";
 
 import { getCurrentUser } from "./services/auth";
 
@@ -180,7 +181,27 @@ function App() {
 
     }
 
+    // ---------------------------------------------------------
+    // Explore
+    // ---------------------------------------------------------
 
+    if (page === "explore") {
+
+        return (
+            <Explore
+
+                onBack={() =>
+                    setPage("dashboard")
+                }
+
+                onMyTrips={() =>
+                    setPage("my-trips")
+                }
+
+            />
+        );
+
+    }
     // ---------------------------------------------------------
     // Dashboard
     // ---------------------------------------------------------
@@ -207,7 +228,12 @@ function App() {
                 onMyTrips={() =>
                     setPage("my-trips")
                 }
+                onOpenTrip={(tripId) => {
 
+                    setSelectedTripId(tripId);
+                    setPage("trip-builder");
+
+                }}
             />
         );
 
